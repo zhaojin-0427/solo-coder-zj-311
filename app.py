@@ -13,6 +13,14 @@ from core import (
     create_report,
     charts,
     METRICS,
+    OPTIONAL_INJURY_COLUMNS,
+    has_injury_data,
+    missing_injury_columns,
+    compute_injury_risk_score,
+    risk_level,
+    detect_injury_risk_patterns,
+    build_old_injury_risk_list,
+    build_recovery_tracking_table,
 )
 from core.data_loader import DataValidationError
 
@@ -30,7 +38,9 @@ def main():
     .pattern-warning {background:#fff3cd; border-left:4px solid #ffc107; padding:0.8rem 1rem; border-radius:6px; margin:0.3rem 0;}
     .pattern-success {background:#d4edda; border-left:4px solid #28a745; padding:0.8rem 1rem; border-radius:6px; margin:0.3rem 0;}
     .pattern-info {background:#d1ecf1; border-left:4px solid #17a2b8; padding:0.8rem 1rem; border-radius:6px; margin:0.3rem 0;}
+    .pattern-danger {background:#f8d7da; border-left:4px solid #dc3545; padding:0.8rem 1rem; border-radius:6px; margin:0.3rem 0;}
     .schedule-card {background:#f8f9fa; border-radius:10px; padding:1rem; margin:0.3rem 0; border:1px solid #e9ecef;}
+    .missing-field-notice {background:#fff3cd; border-left:4px solid #ffc107; padding:1rem 1.2rem; border-radius:8px; margin:1rem 0;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -61,6 +71,8 @@ def main():
         - **比赛阶段**: 日常训练、赛前集训、比赛周、赛后恢复
         - **心率区间**: 热身区/有氧区/混氧区/无氧区/极限区
         - **主观疲劳评分**: 1-10分
+
+        可选伤病字段：`疼痛部位, 疼痛评分, 旧伤标记, 恢复状态, 睡眠时长_小时, 恢复训练类型`
         """)
         return
 
@@ -76,8 +88,13 @@ def main():
         - **比赛阶段**: 日常训练、赛前集训、比赛周、赛后恢复
         - **心率区间**: 热身区/有氧区/混氧区/无氧区/极限区
         - **主观疲劳评分**: 1-10分
+
+        可选伤病字段：`疼痛部位, 疼痛评分, 旧伤标记, 恢复状态, 睡眠时长_小时, 恢复训练类型`
         """)
         return
+
+    injury_available = has_injury_data(df)
+    missing_cols = missing_injury_columns(df) if not injury_available else []
 
     with st.sidebar:
         st.divider()
@@ -115,7 +132,8 @@ def main():
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 训练负荷趋势", "🕸️ 动作完成度雷达", "🔥 疲劳热力图", "🎭 舞种对比", "📋 规律识别与排课建议"])
+    tab_names = ["📊 训练负荷趋势", "🕸️ 动作完成度雷达", "🔥 疲劳热力图", "🎭 舞种对比", "📋 规律识别与排课建议", "🏥 伤病风险预警与恢复跟踪"]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_names)
 
     with tab1:
         st.subheader("训练负荷趋势分析")
@@ -229,12 +247,114 @@ def main():
                 if patterns:
                     pat_df = pd.DataFrame(patterns)
                     pat_df.to_excel(writer, sheet_name="识别规律", index=False)
+                if has_injury_data(df_filtered):
+                    injury_risk_df = df_filtered.copy()
+                    injury_risk_df["风险评分"] = injury_risk_df.apply(compute_injury_risk_score, axis=1)
+                    injury_risk_df["风险等级"] = injury_risk_df["风险评分"].apply(risk_level)
+                    injury_cols = ["日期", "舞种", "动作类型", "主观疲劳评分", "动作完成度", "风险评分", "风险等级"]
+                    optional_injury_cols = [c for c in ["疼痛部位", "疼痛评分", "旧伤标记", "恢复状态", "睡眠时长_小时"] if c in injury_risk_df.columns]
+                    all_injury_cols = injury_cols[:5] + optional_injury_cols + injury_cols[5:]
+                    existing_cols = [c for c in all_injury_cols if c in injury_risk_df.columns]
+                    injury_risk_df[existing_cols].to_excel(writer, sheet_name="伤病风险", index=False)
+                    old_injury_list = build_old_injury_risk_list(df_filtered)
+                    if not old_injury_list.empty:
+                        old_injury_list.to_excel(writer, sheet_name="旧伤复发风险", index=False)
+                    recovery_df = build_recovery_tracking_table(df_filtered)
+                    if not recovery_df.empty:
+                        recovery_df.to_excel(writer, sheet_name="恢复状态跟踪", index=False)
             st.download_button(
                 label="📥 导出Excel数据报告 (.xlsx)",
                 data=output.getvalue(),
                 file_name=f"古典舞训练数据_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+    with tab6:
+        if not has_injury_data(df_filtered):
+            st.markdown(
+                '<div class="missing-field-notice">'
+                '<strong>⚠️ 当前数据不包含伤病相关字段</strong><br><br>'
+                '伤病风险预警与恢复跟踪功能需要 CSV 中包含以下可选字段：<br>'
+                '• <code>疼痛部位</code>：如 腰部、膝盖、踝关节 等<br>'
+                '• <code>疼痛评分</code>：0-10 分<br>'
+                '• <code>旧伤标记</code>：是/否<br>'
+                '• <code>恢复状态</code>：完全恢复/恢复中/未恢复<br>'
+                '• <code>睡眠时长_小时</code>：如 7.5<br>'
+                '• <code>恢复训练类型</code>：如 低强度拉伸、水中训练 等<br><br>'
+                '请在 CSV 中添加以上字段后重新上传，即可使用伤病风险分析功能。'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            st.info("现有分析功能（训练负荷趋势、动作完成度雷达、疲劳热力图、舞种对比、规律识别与排课建议）仍可正常使用，请查看其他 Tab。")
+        else:
+            missing = missing_injury_columns(df_filtered)
+            if missing:
+                st.markdown(
+                    f'<div class="missing-field-notice">'
+                    f'<strong>⚠️ 部分伤病字段缺失</strong><br>'
+                    f'当前数据缺少以下字段：{", ".join(f"<code>{c}</code>" for c in missing)}<br>'
+                    f'部分分析图表可能无法完整展示，建议补充缺失字段以获得完整分析。'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+            st.subheader("📊 伤病风险趋势图")
+            fig_injury_trend = charts.build_injury_risk_trend_chart(df_filtered)
+            st.plotly_chart(fig_injury_trend, width="stretch")
+
+            st.markdown("---")
+            st.subheader("🦴 疼痛部位分布图")
+            if "疼痛部位" in df_filtered.columns:
+                fig_pain = charts.build_pain_location_distribution_chart(df_filtered)
+                if fig_pain.data:
+                    st.plotly_chart(fig_pain, width="stretch")
+                else:
+                    st.info("当前数据中无疼痛记录。")
+            else:
+                st.warning("数据中缺少「疼痛部位」字段，无法生成疼痛部位分布图。")
+
+            st.markdown("---")
+            st.subheader("⚡ 旧伤复发风险列表")
+            if "旧伤标记" in df_filtered.columns:
+                fig_old_injury = charts.build_old_injury_risk_chart(df_filtered)
+                if fig_old_injury.data:
+                    st.plotly_chart(fig_old_injury, width="stretch")
+
+                old_injury_list = build_old_injury_risk_list(df_filtered)
+                if not old_injury_list.empty:
+                    st.markdown("**旧伤学员复发风险详情**")
+                    st.dataframe(old_injury_list, use_container_width=True)
+                else:
+                    st.info("当前数据中无旧伤标记记录。")
+            else:
+                st.warning("数据中缺少「旧伤标记」字段，无法生成旧伤复发风险分析。")
+
+            st.markdown("---")
+            st.subheader("🔄 恢复状态跟踪表")
+            if "恢复状态" in df_filtered.columns:
+                fig_recovery = charts.build_recovery_tracking_chart(df_filtered)
+                if fig_recovery.data:
+                    st.plotly_chart(fig_recovery, width="stretch")
+
+                recovery_table = build_recovery_tracking_table(df_filtered)
+                if not recovery_table.empty:
+                    st.markdown("**恢复状态跟踪详情**")
+                    st.dataframe(recovery_table, use_container_width=True)
+                else:
+                    st.info("无恢复状态数据。")
+            else:
+                st.warning("数据中缺少「恢复状态」字段，无法生成恢复状态跟踪。")
+
+            st.markdown("---")
+            st.subheader("🚨 伤病风险模式识别")
+            injury_patterns = detect_injury_risk_patterns(df_filtered)
+            if injury_patterns:
+                for p in injury_patterns:
+                    css_class = f"pattern-{p['type']}"
+                    st.markdown(f'<div class="{css_class}"><strong>{p["title"]}</strong><br>{p["detail"]}</div>',
+                                unsafe_allow_html=True)
+            else:
+                st.info("当前数据未识别到显著伤病风险模式。")
 
 
 if __name__ == "__main__":

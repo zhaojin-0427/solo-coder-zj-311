@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from .constants import METRICS
+from .injury_risk import compute_injury_risk_score, risk_level
 
 
 def build_trend_chart(df_filtered):
@@ -231,3 +232,148 @@ def build_correlation_heatmap(df_filtered):
     ))
     fig_corr.update_layout(title="训练指标关联矩阵", height=550)
     return fig_corr
+
+
+def build_injury_risk_trend_chart(df_filtered):
+    df_copy = df_filtered.copy()
+    df_copy["日期"] = pd.to_datetime(df_copy["日期"])
+    df_copy = df_copy.sort_values("日期")
+    df_copy["风险评分"] = df_copy.apply(compute_injury_risk_score, axis=1)
+    daily_risk = df_copy.groupby("日期").agg(
+        风险评分均值=("风险评分", "mean"),
+        风险评分最大值=("风险评分", "max"),
+    ).reset_index()
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=("每日伤病风险评分趋势", "风险等级分布"),
+                        vertical_spacing=0.12)
+
+    fig.add_trace(go.Scatter(
+        x=daily_risk["日期"], y=daily_risk["风险评分均值"],
+        name="风险均值", line=dict(color="#e74c3c", width=2),
+        mode="lines+markers", marker_size=4,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=daily_risk["日期"], y=daily_risk["风险评分最大值"],
+        name="风险最大值", line=dict(color="#f39c12", width=2, dash="dash"),
+        mode="lines+markers", marker_size=4,
+    ), row=1, col=1)
+
+    risk_counts = df_copy["风险评分"].apply(risk_level).value_counts()
+    fig.add_trace(go.Bar(
+        x=risk_counts.index, y=risk_counts.values,
+        marker_color=["#2ecc71", "#f39c12", "#e74c3c"][:len(risk_counts)],
+        name="风险等级分布",
+    ), row=2, col=1)
+
+    fig.update_layout(height=650, title_text="伤病风险趋势分析", showlegend=True)
+    fig.update_xaxes(title_text="日期", row=1, col=1)
+    fig.update_yaxes(title_text="风险评分", row=1, col=1)
+    fig.update_xaxes(title_text="风险等级", row=2, col=1)
+    fig.update_yaxes(title_text="记录数", row=2, col=1)
+    return fig
+
+
+def build_pain_location_distribution_chart(df_filtered):
+    if "疼痛部位" not in df_filtered.columns:
+        return go.Figure()
+
+    pain_data = df_filtered[df_filtered["疼痛部位"] != "无"].copy()
+    if pain_data.empty:
+        return go.Figure()
+
+    pain_dist = pain_data["疼痛部位"].value_counts().reset_index()
+    pain_dist.columns = ["疼痛部位", "出现次数"]
+
+    if "疼痛评分" in pain_data.columns:
+        avg_pain = pain_data.groupby("疼痛部位")["疼痛评分"].mean().reset_index()
+        avg_pain.columns = ["疼痛部位", "平均疼痛评分"]
+        pain_dist = pain_dist.merge(avg_pain, on="疼痛部位", how="left")
+
+    fig = make_subplots(rows=1, cols=2,
+                        subplot_titles=("疼痛部位出现频次", "各部位平均疼痛评分"),
+                        specs=[[{"type": "pie"}, {"type": "bar"}]])
+
+    fig.add_trace(go.Pie(
+        labels=pain_dist["疼痛部位"],
+        values=pain_dist["出现次数"],
+        marker_colors=px.colors.qualitative.Set2[:len(pain_dist)],
+    ), row=1, col=1)
+
+    if "平均疼痛评分" in pain_dist.columns:
+        fig.add_trace(go.Bar(
+            x=pain_dist["疼痛部位"],
+            y=pain_dist["平均疼痛评分"],
+            marker_color="#e74c3c",
+            name="平均疼痛评分",
+        ), row=1, col=2)
+
+    fig.update_layout(height=450, title_text="疼痛部位分布分析", showlegend=True)
+    return fig
+
+
+def build_old_injury_risk_chart(df_filtered):
+    if "旧伤标记" not in df_filtered.columns:
+        return go.Figure()
+
+    old_injury = df_filtered[df_filtered["旧伤标记"] == "是"].copy()
+    if old_injury.empty:
+        return go.Figure()
+
+    old_injury["风险评分"] = old_injury.apply(compute_injury_risk_score, axis=1)
+    old_injury["风险等级"] = old_injury["风险评分"].apply(risk_level)
+
+    risk_by_level = old_injury["风险等级"].value_counts()
+
+    fig = make_subplots(rows=1, cols=2,
+                        subplot_titles=("旧伤学员风险等级分布", "旧伤学员风险评分分布"),
+                        specs=[[{"type": "pie"}, {"type": "histogram"}]])
+
+    colors_map = {"低风险": "#2ecc71", "中风险": "#f39c12", "高风险": "#e74c3c"}
+    fig.add_trace(go.Pie(
+        labels=risk_by_level.index,
+        values=risk_by_level.values,
+        marker_colors=[colors_map.get(l, "#95a5a6") for l in risk_by_level.index],
+    ), row=1, col=1)
+
+    fig.add_trace(go.Histogram(
+        x=old_injury["风险评分"],
+        nbinsx=15,
+        marker_color="#e67e22",
+        name="风险评分分布",
+    ), row=1, col=2)
+
+    fig.update_layout(height=450, title_text="旧伤复发风险分析", showlegend=True)
+    fig.update_xaxes(title_text="风险评分", row=1, col=2)
+    fig.update_yaxes(title_text="人数", row=1, col=2)
+    return fig
+
+
+def build_recovery_tracking_chart(df_filtered):
+    if "恢复状态" not in df_filtered.columns:
+        return go.Figure()
+
+    recovery_dist = df_filtered["恢复状态"].value_counts()
+
+    fig = make_subplots(rows=1, cols=2,
+                        subplot_titles=("恢复状态分布", "恢复训练类型分布"),
+                        specs=[[{"type": "pie"}, {"type": "bar"}]])
+
+    recovery_colors = {"完全恢复": "#2ecc71", "恢复中": "#f39c12", "未恢复": "#e74c3c"}
+    fig.add_trace(go.Pie(
+        labels=recovery_dist.index,
+        values=recovery_dist.values,
+        marker_colors=[recovery_colors.get(l, "#95a5a6") for l in recovery_dist.index],
+    ), row=1, col=1)
+
+    if "恢复训练类型" in df_filtered.columns:
+        training_dist = df_filtered[df_filtered["恢复状态"] != "完全恢复"]["恢复训练类型"].value_counts()
+        fig.add_trace(go.Bar(
+            x=training_dist.index,
+            y=training_dist.values,
+            marker_color="#3498db",
+            name="恢复训练类型",
+        ), row=1, col=2)
+
+    fig.update_layout(height=450, title_text="恢复状态跟踪", showlegend=True)
+    return fig

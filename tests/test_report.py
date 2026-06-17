@@ -4,12 +4,12 @@ from _path import *
 from core.report import create_report
 
 
-def _make_sample_df():
+def _make_sample_df(with_injury=False):
     records = []
     dances = ["身韵", "水袖", "剑舞"]
     for i, dance in enumerate(dances):
         for j in range(5):
-            records.append({
+            record = {
                 "日期": f"2025-09-{j+1:02d}",
                 "舞种": dance,
                 "动作类型": "软开度",
@@ -24,7 +24,15 @@ def _make_sample_df():
                 "旋转稳定度": 55.0 + j,
                 "跳跃高度": 60.0 + j,
                 "动作完成度": 70.0 + j,
-            })
+            }
+            if with_injury:
+                record["疼痛部位"] = "腰部"
+                record["疼痛评分"] = 3.0 + j * 0.5
+                record["旧伤标记"] = "否"
+                record["恢复状态"] = "完全恢复"
+                record["睡眠时长_小时"] = 7.0 + j * 0.2
+                record["恢复训练类型"] = "常规训练"
+            records.append(record)
     return pd.DataFrame(records)
 
 
@@ -121,6 +129,30 @@ class TestCreateReport(unittest.TestCase):
         self.assertGreater(pos_dance, pos_overview)
         self.assertGreater(pos_patterns, pos_dance)
         self.assertGreater(pos_schedule, pos_patterns)
+
+    def test_report_no_injury_section_without_injury_data(self):
+        df = _make_sample_df(with_injury=False)
+        result = create_report(df, [], [])
+        self.assertNotIn("伤病风险与恢复建议", result)
+
+    def test_report_injury_section_with_injury_data(self):
+        df = _make_sample_df(with_injury=True)
+        result = create_report(df, [], [])
+        self.assertIn("伤病风险与恢复建议", result)
+        self.assertIn("风险概况", result)
+
+    def test_report_injury_section_contains_pain_stats(self):
+        df = _make_sample_df(with_injury=True)
+        result = create_report(df, [], [])
+        self.assertIn("疼痛部位统计", result)
+        self.assertIn("腰部", result)
+
+    def test_report_injury_section_after_schedule(self):
+        df = _make_sample_df(with_injury=True)
+        result = create_report(df, [], [])
+        pos_schedule = result.find("下周训练建议")
+        pos_injury = result.find("伤病风险与恢复建议")
+        self.assertGreater(pos_injury, pos_schedule)
 
 
 if __name__ == "__main__":

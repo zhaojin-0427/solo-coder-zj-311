@@ -29,7 +29,12 @@ def validate_columns(df):
     return True
 
 
-def generate_sample_data(n=600):
+PAIN_PARTS = ["腰部", "膝盖", "踝关节", "髋关节", "肩部", "腕关节"]
+RECOVERY_STATUSES = ["完全恢复", "恢复中", "未恢复"]
+RECOVERY_TRAINING_TYPES = ["低强度拉伸", "水中训练", "核心稳定训练", "平衡训练", "呼吸调节"]
+
+
+def generate_sample_data(n=600, include_injury=True):
     np.random.seed(42)
     start_date = datetime(2025, 9, 1)
     records = []
@@ -80,7 +85,7 @@ def generate_sample_data(n=600):
             comp += 5
             fatigue = min(10, fatigue * 1.1)
 
-        records.append({
+        record = {
             "日期": date.strftime("%Y-%m-%d"),
             "舞种": dance,
             "动作类型": movement,
@@ -95,16 +100,45 @@ def generate_sample_data(n=600):
             "旋转稳定度": round(rot, 1),
             "跳跃高度": round(jump, 1),
             "动作完成度": round(comp, 1),
-        })
+        }
+
+        if include_injury:
+            has_pain = np.random.random() < 0.3
+            if has_pain:
+                pain_part = np.random.choice(PAIN_PARTS)
+                pain_score = np.clip(np.random.normal(4, 2), 0, 10)
+                record["疼痛部位"] = pain_part
+                record["疼痛评分"] = round(pain_score, 1)
+            else:
+                record["疼痛部位"] = "无"
+                record["疼痛评分"] = 0.0
+
+            is_old_injury = np.random.random() < 0.15
+            record["旧伤标记"] = "是" if is_old_injury else "否"
+
+            if is_old_injury:
+                record["恢复状态"] = np.random.choice(RECOVERY_STATUSES, p=[0.3, 0.4, 0.3])
+            else:
+                record["恢复状态"] = "完全恢复"
+
+            sleep_hours = np.clip(np.random.normal(7, 1.2), 3, 10)
+            record["睡眠时长_小时"] = round(sleep_hours, 1)
+
+            if record["恢复状态"] != "完全恢复":
+                record["恢复训练类型"] = np.random.choice(RECOVERY_TRAINING_TYPES)
+            else:
+                record["恢复训练类型"] = "常规训练"
+
+        records.append(record)
     return pd.DataFrame(records)
 
 
-def load_data(uploaded, use_sample):
+def load_data(uploaded, use_sample, include_injury=True):
     if uploaded is not None:
         df = pd.read_csv(uploaded)
         validate_columns(df)
     elif use_sample:
-        df = generate_sample_data()
+        df = generate_sample_data(include_injury=include_injury)
     else:
         return None
     df = add_cycle_column(df)
