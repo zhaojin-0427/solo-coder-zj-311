@@ -14,6 +14,7 @@ from core import (
     charts,
     METRICS,
 )
+from core.data_loader import DataValidationError
 
 st.set_page_config(page_title="古典舞训练负荷与动作完成度分析台", layout="wide", page_icon="🩰")
 
@@ -41,7 +42,27 @@ def main():
         uploaded = st.file_uploader("上传训练记录 CSV", type=["csv"])
         use_sample = st.checkbox("使用示例数据", value=True)
 
-    df = load_data(uploaded, use_sample)
+    df = None
+    load_error = None
+    try:
+        df = load_data(uploaded, use_sample)
+    except DataValidationError as e:
+        load_error = str(e)
+
+    if load_error:
+        st.error(f"❌ CSV 文件格式错误：\n\n{load_error}")
+        st.markdown("### 📋 CSV格式要求")
+        st.markdown("""
+        所需列：`日期, 舞种, 动作类型, 学员级别, 指导老师, 比赛阶段, 训练时长_分钟, 心率区间, 平均心率, 主观疲劳评分, 软开度, 旋转稳定度, 跳跃高度, 动作完成度`
+
+        - **舞种**: 身韵、水袖、剑舞、扇舞、把杆、毯技
+        - **动作类型**: 软开度、旋转、跳跃、翻身、控制、步法
+        - **学员级别**: 初级、中级、高级、表演级
+        - **比赛阶段**: 日常训练、赛前集训、比赛周、赛后恢复
+        - **心率区间**: 热身区/有氧区/混氧区/无氧区/极限区
+        - **主观疲劳评分**: 1-10分
+        """)
+        return
 
     if df is None:
         st.info("👈 请上传CSV文件或勾选「使用示例数据」开始分析")

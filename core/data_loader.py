@@ -10,8 +10,23 @@ from .constants import (
     HR_ZONES,
     HR_ZONE_BASE_VALUES,
     LEVEL_BASE_SCORES,
+    REQUIRED_COLUMNS,
 )
 from .cycles import add_cycle_column
+
+
+class DataValidationError(Exception):
+    pass
+
+
+def validate_columns(df):
+    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    if missing:
+        raise DataValidationError(
+            f"CSV 文件缺少必需列：{', '.join(missing)}\n"
+            f"请确保包含以下列：{', '.join(REQUIRED_COLUMNS)}"
+        )
+    return True
 
 
 def generate_sample_data(n=600):
@@ -87,6 +102,7 @@ def generate_sample_data(n=600):
 def load_data(uploaded, use_sample):
     if uploaded is not None:
         df = pd.read_csv(uploaded)
+        validate_columns(df)
     elif use_sample:
         df = generate_sample_data()
     else:
